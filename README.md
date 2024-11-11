@@ -1,7 +1,8 @@
 # KI_GAN
 ## 上传数据集预处理文件
 ```
-dataPreprocess.py
+dataPreprocess.py # 处理单个文件
+datasetPreprocess.py # 处理整个天津数据集
 ```
 ## 添加DEBUG模式,数据转移至CPU上运行
 ```
