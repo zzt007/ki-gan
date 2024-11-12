@@ -86,15 +86,15 @@ def batch_preprocess(folder_path, target_basic_info_dir, target_basic_info_traff
     delete_count += 1
 
 def main():
-    dataset_folder = '/root/trajectory_prediction/SinD-main/Data/sampleTianjin' # 测试能否正常批量化处理
-    # dataset_folder = '/root/trajectory_prediction/SinD-main/Data/Tianjin'
+    # dataset_folder = '/root/trajectory_prediction/SinD-main/Data/sampleTianjin' # 测试能否正常批量化处理
+    dataset_folder = '/root/trajectory_prediction/SinD-main/Data/Tianjin'
     target_basic_info_dir = '/root/trajectory_prediction/KI_GAN/datasets/Tianjin/basic_info_dir'
     target_basic_info_traffic_state_dir = '/root/trajectory_prediction/KI_GAN/datasets/Tianjin/train' # 存放最终的训练集
     
-    basic_info_count = 0 # 计数器，顺便用于给处理得到的文件按顺序命名
-    basic_info_traffic_state_count = 0
-    load_basic_info_count = 0 # 计数器，顺便用于读取到每一个basic_info_state文件
-    delete_count =0 # 实际上是为了按顺序读取到每一个basic_info_traffic_state文件，并按顺序命名，后续可以fix,这个写法太不优雅了
+    basic_info_count = 11 # 计数器，顺便用于给处理得到的文件按顺序命名，从1开始到23
+    basic_info_traffic_state_count = 11
+    load_basic_info_count = 11 # 计数器，顺便用于读取到每一个basic_info_state文件
+    delete_count =11 # 实际上是为了按顺序读取到每一个basic_info_traffic_state文件，并按顺序命名，后续可以fix,这个写法太不优雅了
     for folder_name in os.listdir(dataset_folder):
         print(len(os.listdir(dataset_folder)))
         folder_path = os.path.join(dataset_folder, folder_name)

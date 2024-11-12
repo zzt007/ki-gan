@@ -2,7 +2,7 @@
 ## 上传数据集预处理文件
 ```
 dataPreprocess.py # 处理单个文件
-datasetPreprocess.py # 处理整个天津数据集
+dataBatchPreprocess.py # 处理整个天津数据集，需要从main()中修改对应的文件夹地址
 ```
 ## 添加DEBUG模式,数据转移至CPU上运行
 ```
