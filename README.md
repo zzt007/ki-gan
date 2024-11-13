@@ -1,10 +1,20 @@
 # KI_GAN
-## 上传数据集预处理文件
+
+## log 
+### 241113 belike👇
+```
+创建新分支dev，用于记录添加spectral信息后相应的模型修改
+1、增加spectral encoder
+2、对齐维度
+```
+
+### 241111 belike👇
+### 上传数据集预处理文件
 ```
 dataPreprocess.py # 处理单个文件
 dataBatchPreprocess.py # 处理整个天津数据集，需要从main()中修改对应的文件夹地址
 ```
-## 添加DEBUG模式,数据转移至CPU上运行
+### 添加DEBUG模式,数据转移至CPU上运行
 ```
 train.py
 1.需要将train.py的args中--use_gpu设为0
@@ -18,7 +28,7 @@ models.py
 后续如有需要,可添加快捷转换方式
 ```
 
-# 241108 belike👇
+### 241108 belike👇
 .
 ├── 01.png
 ├── 02.png
