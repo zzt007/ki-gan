@@ -1,14 +1,20 @@
 # KI_GAN
 
 ## log 
-### 241113 belike👇
+### 241114 👇
+```
+1、初步添加spectral encoder，尚未对齐维度；由于cuda torch.fft总是报错，先使用cpu下的numpy实现fft
+2、将数据集暂时放到kigan文件夹下，方便debug时更快进入调试
+```
+
+### 241113 👇
 ```
 创建新分支dev，用于记录添加spectral信息后相应的模型修改
 1、增加spectral encoder
 2、对齐维度
 ```
 
-### 241111 belike👇
+### 241111 👇
 ### 上传数据集预处理文件
 ```
 dataPreprocess.py # 处理单个文件

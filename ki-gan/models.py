@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 
 CUDA_LAUNCH_BLOCKING=1
 
@@ -28,6 +29,7 @@ def get_noise(shape, noise_type):
     raise ValueError('Unrecognized noise type "%s"' % noise_type)
 
 
+# trajectory encoder 
 class Encoder(nn.Module):
     """Encoder is part of both TrajectoryGenerator and
     TrajectoryDiscriminator"""
@@ -86,6 +88,80 @@ class Encoder(nn.Module):
 
         return final_h
 
+# spectral encoder
+class SpectralEncoder(nn.Module):
+    def __init__(self,
+                 embedding_dim=64,
+                 h_dim=64,
+                 mlp_dim=1024,
+                 num_layers=1,
+                 dropout=0.0):
+        super(SpectralEncoder, self).__init__()
+        self.h_dim = h_dim
+        self.mlp_dim = mlp_dim
+        self.embedding_dim = embedding_dim
+        self.num_layers = num_layers
+
+        self.encoder = nn.LSTM(embedding_dim, h_dim, num_layers, dropout=dropout)
+        self.dft_embedding = nn.Linear(4, embedding_dim)
+    def init_hidden(self, batch):
+        return (
+            torch.zeros(self.num_layers, batch, self.h_dim).cuda(),
+            torch.zeros(self.num_layers, batch, self.h_dim).cuda())
+        
+    def forward(self, obs_traj):
+        """
+        Inputs:
+        - obs_traj: Tensor of shape (obs_len, batch, 2)
+        Output:
+        - final_h: Tensor of shape (self.num_layers, batch, self.h_dim)
+        """
+        # Encode observed Trajectory
+        batch = obs_traj.size(1)
+        
+        # 分别对x-t 和y-t 在gpu上进行dft
+        # x_fft = torch.fft.fft(obs_traj[:, :, 0],dim=0,norm='ortho')
+        # y_fft = torch.fft.fft(obs_traj[:, :, 1],dim=0,norm='ortho')
+
+        # 在cpu上进行dft
+        obs_traj_cpu = obs_traj.cpu()
+        x_fft_cpu = torch.fft.fft(obs_traj_cpu[:, :, 0],dim=0,norm='ortho')
+        y_fft_cpu = torch.fft.fft(obs_traj_cpu[:, :, 1],dim=0,norm='ortho')
+        # 将cpu上的dft结果转移到gpu上
+        x_fft = x_fft_cpu.to('cuda')
+        y_fft = y_fft_cpu.to('cuda')
+        # 将傅里叶变换结果转换为实数张量，其中最后一个维度表示实部和虚部
+        x_fft_real = torch.view_as_real(x_fft)
+        y_fft_real = torch.view_as_real(y_fft)
+        
+        # 将xy实部和虚部拼接在一起，此时shape [obs_len, batch_size, 4]
+        fft_result = torch.cat([x_fft_real, y_fft_real],dim=-1)
+        
+        # # 分实部和虚部处理，即幅值和相位
+        # x_fft_real_part = x_fft_real[:, :, 0]
+        # x_fft_imag_part = x_fft_real[:, :, 1]
+        # y_fft_real_part = y_fft_real[:, :, 0]
+        # y_fft_imag_part = y_fft_real[:, :, 1]
+
+        # 将xy实部和虚部拼接在一起，此时shape [obs_len, batch_size, 4]
+        # fft_result = torch.cat([x_fft_real_part,
+        #                         x_fft_imag_part,
+        #                         y_fft_real_part,
+        #                         y_fft_imag_part],dim=-1)
+        
+        # 对fft_result进行embedding升维
+        fft_embedding = self.dft_embedding(fft_result.reshape(-1, 4))
+        fft_embedding = fft_embedding.view(
+            -1, batch, self.embedding_dim)
+        
+
+        state_tuple = self.init_hidden(batch)
+        output, state = self.encoder(fft_embedding, state_tuple)
+        final_h = state[0]
+
+        return final_h
+
+# traffic light encoder
 class TrafficEncoder(nn.Module):
     def __init__(self, traffic_state_dim=5,embedding_dim=64, h_dim=64, mlp_dim=1024, num_layers=1, dropout=0.0):
         super(TrafficEncoder, self).__init__()
@@ -134,6 +210,7 @@ class TrafficEncoder(nn.Module):
 
         return final_h
 
+# attribution encoder
 class VehicleEncoder(nn.Module):
     def __init__(self, agent_type_dim=6, embedding_dim=64, h_dim=64, mlp_dim=1024, num_layers=1, dropout=0.0):
         super(VehicleEncoder, self).__init__()
@@ -185,7 +262,6 @@ class VehicleEncoder(nn.Module):
 
         return final_h
 
-
 # motion encoder
 class StateEncoder(nn.Module):
     def __init__(self, embedding_dim=64, h_dim=64, mlp_dim=1024, num_layers=1, dropout=0.0):
@@ -212,6 +288,7 @@ class StateEncoder(nn.Module):
         output, state = self.encoder(state_embedding, state_tuple)
         final_h = state[0]
         return final_h
+
 
 
 class Decoder(nn.Module):
@@ -374,7 +451,6 @@ class PoolHiddenNet(nn.Module):
         return pool_h
 
 
-
 class AttenPoolNet(PoolHiddenNet):
     def __init__(self, embedding_dim=64, h_dim=64, mlp_dim=1024, bottleneck_dim=1024,
                  activation='relu', batch_norm=True, dropout=0.0):
@@ -493,7 +569,9 @@ class TrajectoryGenerator(nn.Module):
         self.traffic_encoder = TrafficEncoder(traffic_state_dim=5,embedding_dim=64, h_dim=traffic_h_dim)
         self.vehicle_encoder = VehicleEncoder(agent_type_dim=6, embedding_dim=64, h_dim=64)
         self.state_encoder = StateEncoder(embedding_dim=embedding_dim, h_dim=64)
-
+        self.spectral_encoder = SpectralEncoder(embedding_dim=embedding_dim, h_dim=64,mlp_dim=mlp_dim,num_layers=num_layers,dropout=dropout)
+        
+        
         self.decoder = Decoder(
             pred_len,
             embedding_dim=embedding_dim,
@@ -528,7 +606,8 @@ class TrajectoryGenerator(nn.Module):
 
         # Decoder Hidden
         if pooling_type:
-            input_dim = encoder_h_dim*3 + bottleneck_dim + traffic_h_dim
+            # input_dim = encoder_h_dim*3 + bottleneck_dim + traffic_h_dim # 不使用spectral 编码时
+            input_dim = encoder_h_dim*4 + bottleneck_dim + traffic_h_dim
 
         else:
             input_dim = encoder_h_dim
@@ -607,31 +686,30 @@ class TrajectoryGenerator(nn.Module):
         # Encode seq
         final_encoder_h = self.encoder(obs_traj_rel)
         # 使用新编码器
+        spectral_encoding = self.spectral_encoder(obs_traj_rel)
         # agent_type shape[obs_len,batch,1]; size shape[obs_len,batch,2]
         vehicle_encoding = self.vehicle_encoder(agent_type, size)
         state_encoding = self.state_encoder(torch.cat([vx, vy, ax, ay], dim=2))
         traffic_encoding = self.traffic_encoder(traffic_state)
 
-
-        combined_encoding = torch.cat([final_encoder_h, vehicle_encoding, state_encoding], dim=2)
-
-
-
+        # 241114，将spectral_encoding加入准备进行交互pool
+        combined_encoding = torch.cat([final_encoder_h, vehicle_encoding, state_encoding,spectral_encoding], dim=2)
 
         # Pool States
-
         if self.pooling_type:
             end_pos = obs_traj[-1, :, :]
 
             pool_h = self.pool_net(combined_encoding, seq_start_end, end_pos,vx,vy)
 
 
-
+            # 增加spectral_encoding的拼接，所以从*3变为*4，有点残差连接了这里
             mlp_decoder_context_input = torch.cat(
-                [combined_encoding.view(-1, self.encoder_h_dim*3), pool_h, traffic_encoding.view(-1, self.traffic_h_dim)], dim=1)
+                [combined_encoding.view(-1, self.encoder_h_dim*4), 
+                 pool_h, 
+                 traffic_encoding.view(-1, self.traffic_h_dim)
+                 ], dim=1)
 
-
-
+        # 这个先不改了，241114，因为看起来这个像是做albtion的时候才会用到，如果到时候要做这个消融，那估计得把traffic加入，然后spectral不加入
         else:
             mlp_decoder_context_input = combined_encoding.view(
                 -1, self.encoder_h_dim)
