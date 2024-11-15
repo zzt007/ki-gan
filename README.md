@@ -1,6 +1,12 @@
 # KI_GAN
 
 ## log 
+### 241115 👇
+```
+1、已eval昨天晚上训练的，大概需要9小时左右的训练时间，效果比原文要差，ADE=0.16,FDE=0.28；
+2、将spectral信息不拼接进入attention pool中，直接和traffic一样再拼接试试，开始训练241115-上午10.32
+```
+
 ### 241114 👇
 ```
 1、初步添加spectral encoder，尚未对齐维度；由于cuda torch.fft总是报错，先使用cpu下的numpy实现fft
