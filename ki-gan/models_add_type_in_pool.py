@@ -335,13 +335,13 @@ class Decoder(nn.Module):
         self.spatial_embedding = nn.Linear(2, embedding_dim)
         self.hidden2pos = nn.Linear(h_dim, 2)
 
-    def forward(self, last_pos, last_pos_rel, state_tuple, seq_start_end, vx,vy):
+    def forward(self, last_pos, last_pos_rel, state_tuple, seq_start_end, vx,vy,agent_type):
         """
         Inputs:
         - last_pos: Tensor of shape (batch, 2) #前一个位置
         - last_pos_rel: Tensor of shape (batch, 2) #相对位置
         - state_tuple: (hh, ch) each tensor of shape (num_layers, batch, h_dim) #隐藏状态和单元状态
-        - seq_start_end: A list of tuples which delimit sequences within batch #序列开始和节俗的索引
+        - seq_start_end: A list of tuples which delimit sequences within batch #序列开始和结束的索引
         Output:
         - pred_traj: tensor of shape (self.seq_len, batch, 2)
         """
@@ -360,7 +360,7 @@ class Decoder(nn.Module):
 
             if self.pool_every_timestep:
                 decoder_h = state_tuple[0]
-                pool_h = self.pool_net(decoder_h, seq_start_end, curr_pos, vx, vy)
+                pool_h = self.pool_net(decoder_h, seq_start_end, curr_pos, vx, vy, agent_type)
 
                 decoder_h = torch.cat(
                     [decoder_h.view(-1, self.h_dim), pool_h], dim=1)
@@ -459,28 +459,36 @@ class AttenPoolNet(PoolHiddenNet):
 
         # Additional layers for processing velocity and computing attention weights
         self.velocity_embedding = nn.Linear(2, embedding_dim)
+        self.agent_type_embedding = nn.Linear(6,embedding_dim)
         self.attention_mlp = make_mlp(
-            [embedding_dim * 2, mlp_dim, 1],
+            [embedding_dim * 3, mlp_dim, 1], # 添加了交通参与者异质性的嵌入
             activation=activation,
             batch_norm=batch_norm,
             dropout=dropout
         )
 
-    def compute_attention_weights(self, rel_pos_embedding, velocity_embedding):
-        concatenated = torch.cat([rel_pos_embedding, velocity_embedding], dim=1)
+    def compute_attention_weights(self, rel_pos_embedding, velocity_embedding, agent_type_embedding):
+        # print('- print the shape of rel_pos_embedding :', rel_pos_embedding.shape)
+        # print('- print the shape of velocity_embedding :', velocity_embedding.shape)
+        # print('- print the shape of agent_type_embedding :', agent_type_embedding.shape)
+        concatenated = torch.cat([rel_pos_embedding, velocity_embedding,agent_type_embedding], dim=1)
         attention_scores = self.attention_mlp(concatenated)
         attention_weights = torch.softmax(attention_scores, dim=1)
         return attention_weights
 
-    def forward(self, h_states, seq_start_end, end_pos, vx, vy):
+    def forward(self, h_states, seq_start_end, end_pos, vx, vy, agent_type):
         pool_h = []
         for _, (start, end) in enumerate(seq_start_end):
             start = start.item()
             end = end.item()
             num_ped = end - start
-
+            # print('- now print the num_ped is : ',num_ped)
             curr_hidden = h_states.view(-1, self.h_dim)[start:end]
             curr_end_pos = end_pos[start:end]
+            
+            curr_agent_type_from_dataset = agent_type[0,:,:]
+            curr_agent_type = curr_agent_type_from_dataset[start:end]
+
 
 
             curr_hidden_repeated = curr_hidden.repeat(num_ped, 1)
@@ -488,14 +496,22 @@ class AttenPoolNet(PoolHiddenNet):
             curr_end_pos_transposed = curr_end_pos.repeat(1, num_ped).view(num_ped * num_ped, -1)
             curr_rel_pos = curr_end_pos_repeated - curr_end_pos_transposed
             curr_rel_embedding = self.spatial_embedding(curr_rel_pos)
-
+            # print('- print the shape of curr_end_pos :', curr_rel_pos.shape)
 
             curr_vx = vx[-1, start:end].repeat_interleave(num_ped).view(num_ped * num_ped, -1)
             curr_vy = vy[-1, start:end].repeat_interleave(num_ped).view(num_ped * num_ped, -1)
             curr_velocity = torch.cat((curr_vx, curr_vy), dim=1)
+            # print('- print the shape of curr_velocity :', curr_velocity.shape)
             curr_velocity_embedding = self.velocity_embedding(curr_velocity)
 
-            attention_weights = self.compute_attention_weights(curr_rel_embedding, curr_velocity_embedding)
+            curr_agent_type_repeated = curr_agent_type.repeat_interleave(num_ped).view(num_ped * num_ped, -1)
+            curr_agent_type_repeated = curr_agent_type.repeat(num_ped, 6)
+            # print('- print the shape of curr_agent_type :', curr_agent_type_repeated.shape)
+            curr_agent_type_embedding = self.agent_type_embedding(curr_agent_type_repeated)
+
+            attention_weights = self.compute_attention_weights(curr_rel_embedding, 
+                                                               curr_velocity_embedding,
+                                                               curr_agent_type_embedding)
 
 
             weighted_h_input = torch.cat([curr_rel_embedding, curr_hidden_repeated], dim=1)
@@ -694,7 +710,7 @@ class TrajectoryGenerator(nn.Module):
         traffic_encoding = self.traffic_encoder(traffic_state)
 
         # 241114，将spectral_encoding加入准备进行交互pool
-        # combined_encoding = torch.cat([final_encoder_h, vehicle_encoding, state_encoding,spectral_encoding], dim=2)
+        combined_encoding = torch.cat([final_encoder_h, vehicle_encoding, state_encoding,spectral_encoding], dim=2)
         # 241115，spectral不参与pool，直接和traffic一样后来拼接即可
         combined_encoding = torch.cat([final_encoder_h, vehicle_encoding, state_encoding], dim=2)
 
@@ -702,7 +718,7 @@ class TrajectoryGenerator(nn.Module):
         if self.pooling_type:
             end_pos = obs_traj[-1, :, :]
 
-            pool_h = self.pool_net(combined_encoding, seq_start_end, end_pos,vx,vy)
+            pool_h = self.pool_net(combined_encoding, seq_start_end, end_pos,vx,vy,agent_type)
 
 
             # 241114，增加spectral_encoding的拼接，所以从*3变为*4，有点残差连接了这里;
@@ -748,7 +764,8 @@ class TrajectoryGenerator(nn.Module):
             last_pos_rel,
             state_tuple,
             seq_start_end,
-            vx,vy
+            vx,vy,
+            agent_type
         )
         pred_traj_fake_rel, final_decoder_h = decoder_out
 
